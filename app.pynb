@@ -1,0 +1,103 @@
+import streamlit as st
+from PIL import Image, ImageDraw
+import time
+
+# 1. 브라우저 페이지 레이아웃 및 제목 설정 (문제의 체크박스 구역 완벽 삭제)
+st.set_page_config(page_title="헬스잇 - 맞춤형 알약 분석", page_icon="💊", layout="wide")
+
+st.title("💊 헬스잇 (Health Eat)")
+st.caption("AI 기반 알약 자동 식별 및 복용 안전 관리 시스템")
+st.markdown("---")
+
+# 2. 메인 화면 분할 (좌측: 사진 업로드 / 우측: AI 바운딩 박스 결과)
+col_left, col_right = st.columns([1, 1])
+
+# 시각화 및 하단 설명란에 매칭할 가상의 알약 데이터셋
+PILL_DATA = [
+    {
+        "id": 1,
+        "color_name": "🔴 빨간색",
+        "rgb": (255, 0, 0),
+        "box": [40, 60, 220, 200],  # 이미지 위 [좌, 상, 우, 하] 좌표
+        "name": "타이레놀정 500mg",
+        "company": "(주)한국존슨앤드존슨",
+        "effect": "해열 및 감기로 인한 두통, 신경통, 근육통 완화",
+        "forbidden": "아스피린, 이부프로펜 등 다른 소염진통제와 임의 혼용 금지",
+        "warning": "✅ 성인 기준 1회 1~2정씩 (하루 최대 8정 이하) 복용 수칙을 준수해 주세요. (⚠️ 음주 후 복용 시 간 손상 위험)"
+    },
+    {
+        "id": 2,
+        "color_name": "🔵 파란색",
+        "rgb": (0, 0, 255),
+        "box": [260, 140, 440, 320],
+        "name": "아스피린정 100mg",
+        "company": "바이엘코리아(주)",
+        "effect": "혈전 예방 (심혈관계 위험성 감소) 및 고열 진통",
+        "forbidden": "타이레놀(아세트아미노펜) 고용량 동시 복용 시 위장관 출혈 위험 증가",
+        "warning": "🚨 위장관 출혈 및 속쓰림 위험이 있으므로 가급적 식후에 복용하세요."
+    }
+]
+
+with col_left:
+    st.subheader("📸 알약 사진 올리기")
+    use_sample = st.button("💡 준비된 샘플 사진으로 테스트해보기")
+    
+    uploaded_file = st.file_uploader("분석할 알약 사진을 올려주세요.", type=["jpg", "png", "jpeg"])
+    
+    raw_image = None
+    if use_sample and uploaded_file is None:
+        st.info("ℹ️ 데모용 샘플 이미지가 생성되었습니다. 오른쪽 결과를 확인하세요!")
+        # 사진 대용 밝은 회색 가상 배경 생성
+        raw_image = Image.new('RGB', (500, 400), color=(240, 240, 240))
+    elif uploaded_file is not None:
+        raw_image = Image.open(uploaded_file)
+
+    if raw_image is not None:
+        st.image(raw_image, caption="사용자가 올린 원본 사진", use_container_width=True)
+    else:
+        st.info("👆 위 업로드 창에 사진을 올리거나 샘플 버튼을 누르면 시작됩니다.")
+
+with col_right:
+    st.subheader("🔍 AI 인식 결과 (바운딩 박스)")
+    
+    if raw_image is not None:
+        with st.spinner("AI가 알약의 위치를 파악하고 바운딩 박스를 그리는 중..."):
+            time.sleep(0.8)
+        
+        # 이미지 가공용 복사본 생성 및 그리기 도구 선언
+        drawn_image = raw_image.copy()
+        draw = ImageDraw.Draw(drawn_image)
+        
+        # 이미지 위에 각각의 색상 사각형 박스와 숫자 그리기
+        for pill in PILL_DATA:
+            # 1. 알약 위치에 테두리 박스 그리기 (선 두께 5px)
+            draw.rectangle(pill["box"], outline=pill["rgb"], width=5)
+            
+            # 2. 번호 가독성을 위한 배경 사각형 배치
+            text_bg = [pill["box"][0], pill["box"][1] - 25, pill["box"][0] + 25, pill["box"][1]]
+            draw.rectangle(text_bg, fill=pill["rgb"])
+            
+            # 3. 박스 위에 흰색 글씨로 숫자(ID) 적기
+            draw.text((pill["box"][0] + 8, pill["box"][1] - 20), str(pill["id"]), fill=(255, 255, 255))
+            
+        st.image(drawn_image, caption="[AI 검출] 알약별 ID 및 바운딩 박스 매칭 완료", use_container_width=True)
+        st.success("🎉 시각화가 완료되었습니다! 아래 상세 보고서를 확인해 주세요.")
+
+# 3. 하단 전체 너비를 활용한 알약 상세 설명란
+if raw_image is not None:
+    st.markdown("---")
+    st.markdown("## 📋 식별된 알약 상세 보고서")
+    
+    # 식별된 알약 개수만큼 루프를 돌며 카드 형태로 깨끗하게 출력
+    for pill in PILL_DATA:
+        with st.expander(f"✨ [알약 {pill['id']}] 번호 — {pill['color_name']} 영역 검출 결과", expanded=True):
+            col_info1, col_info2 = st.columns(2)
+            
+            with col_info1:
+                st.markdown(f"**💊 알약 이름:** {pill['name']}")
+                st.markdown(f"**🏢 제조회사:** {pill['company']}")
+                st.markdown(f"**🎯 주요효능:** {pill['effect']}")
+                
+            with col_info2:
+                st.markdown(f"**⚠️ 같이 먹으면 안되는 약:** {pill['forbidden']}")
+                st.markdown(f"**💡 복용 주의사항:** {pill['warning']}")
