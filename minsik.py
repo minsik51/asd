@@ -1,17 +1,15 @@
-﻿"""
-헬스잇(HealthEat) - YOLOv8 알약 탐지 데모 (hyeoksang.py)
+"""
+헬스잇(HealthEat) - YOLOv8 알약 탐지 데모 (CSV 매핑 연동 버전)
 화면 흐름: 스플래시 -> 사진 입력 -> 인식 중 -> 결과 출력
-세션 상태(KeyError) 해결 및 JSON 기반 의약품 상세 매핑 시스템 연동 완료.
-디자인: 초록 브랜드 컬러 + 카드형 결과 리포트 UI 적용.
 """
 
 import base64
 import gc
-import json
 import os
 
 import cv2
 import numpy as np
+import pandas as pd
 import streamlit as st
 import torch
 from PIL import Image
@@ -147,7 +145,7 @@ st.markdown(
 
 
 # --------------------------------------------------------------------------
-# 세션 상태 초기화 / 화면 전환 (KeyError 방지를 위해 초기화 항목 보강)
+# 세션 상태 초기화 / 화면 전환
 # --------------------------------------------------------------------------
 def init_session_state() -> None:
     defaults = {
@@ -156,7 +154,7 @@ def init_session_state() -> None:
         "detections": None,
         "output_rgb": None,
         "model_path": "best.pt",
-        "drug_info_path": "pill_data.json",
+        "drug_info_path": "drug_full_info.csv",
         "conf_threshold": 0.25,
     }
     for key, value in defaults.items():
@@ -177,7 +175,7 @@ def reset_flow() -> None:
 
 
 # --------------------------------------------------------------------------
-# 모델 / 매핑 데이터 로드 (JSON 로직 반영)
+# 모델 / CSV 데이터 로드 로직
 # --------------------------------------------------------------------------
 @st.cache_resource
 def load_model(path: str):
@@ -185,15 +183,37 @@ def load_model(path: str):
 
 
 @st.cache_data
-def load_drug_json_info(path: str):
-    """의약품 상세정보 JSON 파일을 안전하게 로드합니다."""
+def load_drug_csv_info(path: str):
+    """의약품 상세정보 CSV 파일을 로드하여 딕셔너리로 변환합니다."""
     if not path or not os.path.exists(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        # CSV 로드
+        df = pd.read_csv(path, encoding="utf-8")
+
+        # 'dl_name'을 key로 하고 나머지 정보를 value로 하는 딕셔너리 생성
+        drug_dict = {}
+        for _, row in df.iterrows():
+            name = str(row["dl_name"]).strip()
+            drug_dict[name] = {
+                "dl_name": name,
+                "category": str(row.get("효능군명", "정보 없음")),
+                "company": str(row.get("제조사", "정보 없음")),
+                "type": str(row.get("전문일반", "정보 없음")),
+                "contra_combination": "해당"
+                if row.get("병용금기_해당") == True
+                else "없음",
+                "contra_age": "해당" if row.get("연령금기_해당") == True else "없음",
+                "contra_pregnant": "해당"
+                if row.get("임부금기_해당") == True
+                else "없음",
+                "warning_elderly": "주의"
+                if row.get("노인주의_해당") == True
+                else "없음",
+            }
+        return drug_dict
     except Exception as e:
-        st.error(f"⚠️ JSON 파싱 중 오류 발생: {e}")
+        st.error(f"⚠️ CSV 파싱 중 오류 발생: {e}")
         return None
 
 
@@ -304,17 +324,16 @@ def render_splash() -> None:
 def render_upload() -> None:
     with st.sidebar:
         st.header("⚙️ 설정")
-        # st.text_input의 value와 key 값을 세션 기본값과 연동하여 안전하게 관리합니다.
         st.text_input(
             "모델 가중치 경로 (.pt)",
             value=st.session_state["model_path"],
             key="model_path",
         )
         st.text_input(
-            "의약품 매핑 JSON 경로 (선택)",
+            "의약품 매핑 CSV 경로",
             value=st.session_state["drug_info_path"],
             key="drug_info_path",
-            help="JSON 형식의 알약 매핑 데이터 파일 경로",
+            help="CSV 형식의 알약 매핑 데이터 파일 경로",
         )
         st.slider(
             "신뢰도(confidence) 임계값",
@@ -414,7 +433,7 @@ def render_processing() -> None:
 
     try:
         model = load_model(model_path)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         st.error(f"🚨 모델을 불러오지 못했습니다.\n\n{e}")
         if st.button("← 사진 입력으로 돌아가기"):
             go_to("upload")
@@ -429,20 +448,19 @@ def render_processing() -> None:
 
 
 # --------------------------------------------------------------------------
-# 4. 결과 출력 화면 (KeyError 방지 .get() 안전 장치 적용 및 JSON 연동)
+# 4. 결과 출력 화면 (CSV 데이터 기반 리포트)
 # --------------------------------------------------------------------------
 def render_result() -> None:
     detections = st.session_state.get("detections")
     output_rgb = st.session_state.get("output_rgb")
 
-    # 세션 상태에서 안전하게 값을 가져오고 없으면 기본값 사용
-    drug_info_path = st.session_state.get("drug_info_path", "pill_data.json")
-    drug_info = load_drug_json_info(drug_info_path)
+    drug_info_path = st.session_state.get("drug_info_path", "drug_full_info.csv")
+    drug_info = load_drug_csv_info(drug_info_path)
 
     st.markdown("### ✅ AI 탐지 결과")
 
     if output_rgb is not None:
-        st.image(output_rgb, caption="AI 탐지 결과", width="stretch")
+        st.image(output_rgb, use_container_width=True)
 
     if not detections:
         st.warning(
@@ -457,36 +475,29 @@ def render_result() -> None:
 
         if drug_info is None:
             st.info(
-                f"ℹ️ 의약품 매핑 JSON 파일을 찾지 못했습니다 (`{drug_info_path}`). "
-                "탐지 및 클래스 표시는 정상 동작하며, 제조사/식별코드 등의 상세정보는 표시되지 않습니다."
+                f"ℹ️ 의약품 매핑 CSV 파일을 찾지 못했습니다 (`{drug_info_path}`). "
+                "탐지 및 클래스 표시는 정상 동작하며, 제조사 등의 상세정보는 표시되지 않습니다."
             )
 
         st.markdown("---")
         st.markdown("#### 📋 탐지 상세 리포트")
-        st.caption(
-            "AI 모델의 예측 결과입니다. 신뢰도(confidence)가 낮을수록 오탐 가능성이 높습니다."
-        )
 
         for det in detections:
-            info = None
-            if drug_info:
-                info = drug_info.get(det["drug_name"]) or drug_info.get(
-                    str(det["cls_idx"])
-                )
+            # YOLO가 예측한 클래스명(알약 이름)과 CSV의 dl_name 매핑
+            pred_name = det["drug_name"]
+            info = drug_info.get(pred_name.strip()) if drug_info else None
 
-            display_name = (
-                info.get("dl_name", det["drug_name"]) if info else det["drug_name"]
-            )
-            effect = info.get("effect", "정보 없음") if info else "정보 없음"
-            category = info.get("category", "정보 없음") if info else "정보 없음"
-            company = info.get("dl_company", "정보 없음") if info else "정보 없음"
+            display_name = info["dl_name"] if info else pred_name
+            company = info["company"] if info else "정보 없음"
+            category = info["category"] if info else "정보 없음"
+            drug_type = info["type"] if info else "정보 없음"
 
             st.markdown(
                 f"""
                 <div class="drug-card">
                     <p class="drug-name">💊 {display_name}</p>
-                    <p class="drug-sub">🏢 {company} · {category}</p>
-                    <p class="drug-sub">🎯 {effect}</p>
+                    <p class="drug-sub">🏢 제조사: {company} | 분류: {drug_type}</p>
+                    <p class="drug-sub">🎯 효능: {category}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -494,35 +505,33 @@ def render_result() -> None:
 
             if not info:
                 st.caption(
-                    f"💡 `{drug_info_path}` JSON 파일에 이 클래스"
-                    f"(`{det['drug_name']}` 또는 `{det['cls_idx']}`)에 대한 "
-                    "매핑 정보가 없습니다."
+                    f"💡 CSV 파일에 이 알약 이름(`{pred_name}`)과 정확히 일치하는 매핑 정보가 없습니다."
                 )
+                continue
 
-            with st.expander("부작용", expanded=False):
-                st.write(
-                    info.get("side_effects", "부작용 정보가 없습니다.")
-                    if info
-                    else "부작용 정보가 없습니다."
-                )
-            with st.expander("복용법", expanded=False):
-                st.write(
-                    info.get("usage", "복용법 정보가 없습니다.")
-                    if info
-                    else "복용법 정보가 없습니다."
-                )
-            with st.expander("보관 방법", expanded=True):
-                st.write(
-                    info.get("storage", "보관 방법 정보가 없습니다.")
-                    if info
-                    else "보관 방법 정보가 없습니다."
-                )
+            # 금기 및 주의사항 정보를 st.expander 내부 UI에 배치
+            with st.expander("🚨 임부 / 연령 / 병용 금기 정보", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(label="임부 금기", value=info["contra_pregnant"])
+                with col2:
+                    st.metric(label="연령 금기", value=info["contra_age"])
+                with col3:
+                    st.metric(label="병용 금기", value=info["contra_combination"])
+
+            with st.expander("👵 노인 주의 정보", expanded=False):
+                if info["warning_elderly"] == "주의":
+                    st.warning(
+                        "⚠️ 이 약품은 노인 복용 시 주의가 필요합니다. 의사/약사와 상담하세요."
+                    )
+                else:
+                    st.success("✅ 노인 주의 특이사항이 없습니다.")
 
     st.markdown("---")
     st.warning(
         "⚠️ **이 결과는 AI 모델의 예측값이며 100% 정확하지 않을 수 있습니다.** "
         "실제 복용 중인 약을 확인하려면 반드시 약사·의사와 상담하거나 "
-        "식품의약품안전처 '의약품안전나라(nedrug.mfds.go.kr)'에서 다시 확인해 주세요."
+        "식품의약품안전처 '의약품안전나라'에서 다시 확인해 주세요."
     )
 
     st.write("")
